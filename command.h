@@ -2,12 +2,14 @@
 #define COMMAND_H
 
 
-
 #define LIST  0
 #define DIFF  1
 #define PULL  2
 #define LEAVE 3
 
+
+
+extern char g_dir[256];
 typedef struct command_header
 {
 	char type; // command type list above

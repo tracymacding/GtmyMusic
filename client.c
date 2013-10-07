@@ -122,7 +122,7 @@ static BOOL  compute_file_md5(char *f_name, char *md5, int f_size)
 		ret = read(fd, data + finished, remain);
 		if(ret < 0) {
 			res = FALSE;
-			printf("Read file %s failed while compute file md5: ", f_name, strerror(errno));
+			printf("Read file %s failed while compute file md5: %s\n", f_name, strerror(errno));
 			goto out;
 		}
 		finished += ret;
