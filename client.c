@@ -287,25 +287,26 @@ static void delete_hash_entries(BOOL server)
 {
 	int i = 0;
 	struct file_entry *ent = NULL;
+	struct file_entry *next = NULL;
 
 	if(server == SERVER) {
 		for(; i < HASH_SIZE; i++)
 		{
-			while((ent = g_serv_fe_hash[i]) != NULL) {
+			ent = g_serv_fe_hash[i];
+			while(ent != NULL) {
+				next = ent->next;
 				free(ent);
-				ent = ent->next;
+				ent = next;
 			}
 			g_serv_fe_hash[i] = NULL;
 		}
 	}
 	else {
-		for(; i < HASH_SIZE; i++)
-		{
-			while((ent = g_local_fe_hash[i]) != NULL) {
-				free(ent);
-				ent = ent->next;
-			}
-			g_local_fe_hash[i] = NULL;
+		ent = g_local_fe_hash[i];
+		while(ent != NULL) {
+			next = ent->next;
+			free(ent);
+			ent = next;
 		}
 	}
 }
@@ -333,7 +334,7 @@ static BOOL is_miss(struct file_entry *fe)
 
 
 
-static BOOL deal_with_list(char *data, int size)
+static BOOL deal_with_list(char *data, int size, BOOL print)
 {
 	struct file_entry *fe = NULL;
 	int fe_size = 0;
@@ -344,7 +345,10 @@ static BOOL deal_with_list(char *data, int size)
 	/* delete local file entry hash first */
 
 	delete_hash_entries(SERVER);
-	printf("List Result: fileName\tfileSize\n");
+	if(print == TRUE) {
+		printf("List Result: fileName\tfileSize\n");
+		printf("*******************************\n");
+	}
 
 	for(; curr_pos < size;)
 	{
@@ -374,9 +378,11 @@ static BOOL deal_with_list(char *data, int size)
 		curr_pos += fe_size;
 		//printf("file %s, size is %d, md5 is %s\n", fe->f_name, fe->size, fe->f_md5);
 	}
-
-	display_hash_table();
-
+	
+	if(print == TRUE) {
+		display_hash_table();
+		printf("*******************************\n");
+	}
 	return TRUE;
 
 }
@@ -422,14 +428,14 @@ static BOOL deal_with_pull(char *f_name, char *data, int size)
 }
 
 
-static BOOL parse_body(char cmd, char *buf, int size, char *file_name)
+static BOOL parse_body(char cmd, char *buf, int size, char *file_name, BOOL print)
 {
 	BOOL ret = TRUE;
 
 	switch(cmd)
 	{
 		case LIST:
-			ret = deal_with_list(buf, size);
+			ret = deal_with_list(buf, size, print);
 			break;
 		case PULL:
 			ret = deal_with_pull(file_name, buf, size);
@@ -444,7 +450,7 @@ static BOOL parse_body(char cmd, char *buf, int size, char *file_name)
 
 
 
-static BOOL get_result(int fd, char cmd, char *file_name)
+static BOOL get_result(int fd, char cmd, char *file_name, BOOL print)
 {
 	BOOL ret = TRUE;
 	struct response res;
@@ -463,7 +469,7 @@ static BOOL get_result(int fd, char cmd, char *file_name)
 		if(read_response_body(fd, (char **)(&(res.data)), res.header.data_size) != TRUE) 
 			return FALSE;	
 
-		ret =  parse_body(cmd, res.data, res.header.data_size, file_name);
+		ret =  parse_body(cmd, res.data, res.header.data_size, file_name, print);
 	}
 
 	if(res.data != NULL)
@@ -475,7 +481,7 @@ static BOOL get_result(int fd, char cmd, char *file_name)
 
 
 
-static BOOL list_files(int fd)
+static BOOL list_files(int fd, BOOL print)
 {
 	struct command comm;
 	comm.header.type = (char) 0;
@@ -485,29 +491,36 @@ static BOOL list_files(int fd)
 	if(send_data(fd, &(comm.header), sizeof(comm.header)) < 0)
 		return FALSE;
 
-	return get_result(fd, LIST, NULL);
+	return get_result(fd, LIST, NULL, print);
 
 }
 
-static void diff_local_server()
+static void diff_local_server(BOOL print)
 {
 	int i = 0;
-	printf("Diff Result\n");
+	if(print == TRUE) {
+		printf("Diff Result\n");
+		printf("*******************\n");
+	}
 	struct file_entry *fe = NULL;
 	for(; i < HASH_SIZE; i++) {
 		fe = g_serv_fe_hash[i];
 		while(fe != NULL) {
 			if(is_miss(fe)) {
-				printf("%s\n", fe->f_name);
+				if(print == TRUE) 
+					printf("%s\n", fe->f_name);
 				g_miss_file_array[g_miss_file_num++] = fe->f_name;
 			}
 			fe = fe->next;
 		}
 	}
+
+	if(print == TRUE) 
+		printf("*******************\n");
 }
 
 
-static BOOL get_miss_files()
+static BOOL get_miss_files(BOOL print)
 {
 	BOOL ret = TRUE;
 	DIR *dir = NULL;
@@ -536,7 +549,8 @@ static BOOL get_miss_files()
 			ret = FALSE;
 			goto out;
 		}
-
+	
+		memset(f_md5, 0, 33);
 		if(compute_file_md5(d_entry->d_name, f_md5, fstat.st_size) == FALSE)
 			goto out;
 
@@ -559,7 +573,7 @@ static BOOL get_miss_files()
 		insert_hash_table(fe, LOCAL);
 		
 	}
-	diff_local_server();
+	diff_local_server(print);
 
 out:
 	closedir(dir);
@@ -567,14 +581,14 @@ out:
 	
 }
 
-static BOOL diff(int fd)
+static BOOL diff(int fd, BOOL print)
 {
 	/* Get all files server own */
-	if(list_files(fd) == FALSE)
+	if(list_files(fd, FALSE) == FALSE)
 		return FALSE;
 	
 	/* Get local file */
-	if(get_miss_files() == FALSE)
+	if(get_miss_files(print) == FALSE)
 		return FALSE;
 
 	return TRUE;
@@ -591,7 +605,7 @@ static BOOL pull_files(int fd)
 	struct command comm;
 	memset(&comm, 0, sizeof(comm));
 
-	if(diff(fd) == FALSE)
+	if(diff(fd, FALSE) == FALSE)
 		return FALSE;
 
 	comm.header.type = (char) PULL;
@@ -613,7 +627,7 @@ static BOOL pull_files(int fd)
 			continue;
 		}
 		free(comm.data);
-		get_result(fd, PULL, g_miss_file_array[i]);
+		get_result(fd, PULL, g_miss_file_array[i], FALSE);
 	}
 
 	return TRUE;
@@ -686,13 +700,13 @@ int main(int argc, char *args[])
 		//printf("Read Command: %s\n", buf);
 		switch(comm_type(buf)) {
 			case LIST:
-				list_files(sfd);
+				list_files(sfd, TRUE);
 				break;
 			case PULL:
 				pull_files(sfd);
 				break;
 			case DIFF:
-				diff(sfd);
+				diff(sfd, TRUE);
 				break;
 			case LEAVE:
 				printf("ByeBye!\n");
