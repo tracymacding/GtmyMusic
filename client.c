@@ -448,7 +448,7 @@ static BOOL diff(int fd)
 static BOOL pull_files(int fd)
 {
 	struct command comm;
-	memset(comm, 0, sizeof(comm));
+	memset(&comm, 0, sizeof(comm));
 
 	if(diff() == FALSE)
 		return FALSE;
@@ -461,11 +461,11 @@ static BOOL pull_files(int fd)
 		if(comm.data == NULL);
 			continue;
 
-		if(send_data(fd, &(comm->header), sizeof(comm->header)) < 0) {
+		if(send_data(fd, &(comm.header), sizeof(comm.header)) < 0) {
 			free(comm.data);
 			continue;
 		}
-		if(send_data(fd, comm->data, comm->header.data_size) < 0) {
+		if(send_data(fd, comm.data, comm.header.data_size) < 0) {
 			free(comm.data)
 			continue;
 		}
