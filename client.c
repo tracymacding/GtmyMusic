@@ -352,7 +352,7 @@ static BOOL list_files(int fd)
 	comm.header.data_size = 0;
 	comm.data = NULL;
 
-	if(send_data(fd, &(comm->header), sizeof(comm->header)) < 0)
+	if(send_data(fd, &(comm.header), sizeof(comm.header)) < 0)
 		return FALSE;
 
 	return get_result(fd, LIST);
