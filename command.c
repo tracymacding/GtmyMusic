@@ -277,6 +277,7 @@ static BOOL list_current_files(struct response *res)
 	int curr_pos = 0;
 	int f_entry_size = 0;
 	char f_md5[33];
+	char full_path[512];
 
 	dir = opendir(g_dir);
 	if(dir == NULL) {
@@ -297,15 +298,19 @@ static BOOL list_current_files(struct response *res)
 	while((d_entry = readdir(dir)) != NULL) {
 		if(d_entry->d_name[0] == '.')
 			continue;
+
+		memset(full_path, 0, 512);
+		strcpy(full_path, g_dir);
+		strcat(full_path, d_entry->d_name);
 		
-		if(stat(d_entry->d_name, &fstat) < 0) {
-			printf("stat file %s failed: %s\n", d_entry->d_name, strerror(errno));
+		if(stat(full_path, &fstat) < 0) {
+			printf("stat file %s failed: %s\n", full_path, strerror(errno));
 			ret = FALSE;
 			goto out;
 		}
 
 		memset(f_md5, 0, 33);
-		if(compute_file_md5(d_entry->d_name, f_md5, fstat.st_size) == FALSE)
+		if(compute_file_md5(full_path, f_md5, fstat.st_size) == FALSE)
 			goto out;
 
 		printf("file %s, size is %d, md5 is %s\n", d_entry->d_name, fstat.st_size, f_md5);
