@@ -6,12 +6,12 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <linux/in.h>
 #include <unistd.h>
 #include <errno.h>
 #include <dirent.h>
 #include <assert.h>
 #include <openssl/md5.h>
+#include <arpa/inet.h>
 
 
 
@@ -65,7 +65,7 @@ int comm_type(char *buf)
 static BOOL send_data(int fd, void * data, int size)
 {
 	int written = 0;
-	int remain = 0;
+	int remain = size;
 	int ret;
 
 	if(data == NULL || size == 0)
@@ -132,7 +132,7 @@ static BOOL  compute_file_md5(char *f_name, char *md5, int f_size)
 	}
 
 	/* compute md5, using openssl/md5.h */
-	MD5(data,f_size,md);
+	MD5((unsigned char *)data, f_size, md);
 	for (i = 0; i < 16; i++) {
 		sprintf(tmp,"%2.2x",md[i]);
 		strcat(md5,tmp);
@@ -206,25 +206,25 @@ static BOOL read_response_header(int fd, struct response_header *header, int siz
 
 
 
-static BOOL read_response_body(int fd, char *buf, int size)
+static BOOL read_response_body(int fd, char **buf, int size)
 {
 	int finished = 0;
 	int remain = size;
 	int ret;
 
-	if(buf == NULL) {
-		buf = (char *)malloc(size);
-		if(buf == NULL)
+	if(*buf == NULL) {
+		*buf = (char *)malloc(size);
+		if(*buf == NULL)
 			return FALSE;
 	}
 
 	for(;;) 
 	{
-		if((ret = read(fd, buf + finished, remain)) < 0) {
+		if((ret = read(fd, *buf + finished, remain)) < 0) {
 			if(ret == EINTR) 
 				continue;
 			printf("Read response header failed: %s\n", strerror(errno));
-			free(buf);
+			free(*buf);
 			return FALSE;
 		}
 
@@ -264,8 +264,9 @@ static void display_hash_table()
 
 	for(; i < HASH_SIZE; i++)
 	{
-		while((ent = g_fe_hash[i]) != NULL) {
-			printf("%s\t%d\t%lu\n", ent->f_name, ent->size, ent->m_time);
+		ent = g_fe_hash[i];
+		while(ent != NULL) {
+			printf("%s\t%d\t\n", ent->f_name, ent->size);
 			ent = ent->next;
 		}
 	}
@@ -328,11 +329,10 @@ static BOOL deal_with_list(char *data, int size)
 		memset(fe, 0, sizeof(*fe));
 		fe->size = *(int *)now;
 		now += sizeof(int);
-		fe->m_time = *(int *)now;
-		now += sizeof(int);
 		memcpy(fe->f_md5, (char *)now, 32);
 		fe->f_md5[33] = '\0';
-		name_len = fe_size - sizeof(fe->size) - sizeof(fe->m_time) - 32;
+		now += 32;
+		name_len = fe_size - sizeof(fe->size) - 32;
 		fe->f_name = malloc(name_len + 1);
 		if(fe->f_name == NULL) {
 			free(fe);
@@ -342,7 +342,9 @@ static BOOL deal_with_list(char *data, int size)
 		fe->f_name[name_len] = '\0';
 		
 		insert_hash_table(fe);
+		curr_pos += sizeof(fe_size);
 		curr_pos += fe_size;
+		printf("file %s, size is %d, md5 is %s\n", fe->f_name, fe->size, fe->f_md5);
 	}
 
 	display_hash_table();
@@ -425,7 +427,7 @@ static BOOL get_result(int fd, char cmd, char *file_name)
 	}
 
 	if(res.header.data_size != 0) {
-		if(read_response_body(fd, res.data, res.header.data_size) != TRUE) 
+		if(read_response_body(fd, (char **)(&(res.data)), res.header.data_size) != TRUE) 
 			return FALSE;	
 
 		ret =  parse_body(cmd, res.data, res.header.data_size, file_name);
@@ -464,8 +466,6 @@ static BOOL get_miss_files()
 	struct dirent *d_entry = NULL;
 	struct file_entry *fe = NULL;
 	struct stat fstat;
-	int curr_pos = 0;
-	int f_entry_size = 0;
 	char f_md5[33];
 	int name_len;
 
@@ -574,7 +574,7 @@ static BOOL pull_files(int fd)
 
 /* close connection
  */
-static quit(int fd)
+static BOOL quit(int fd)
 {
 	struct command comm;
 	comm.header.type = (char) LEAVE;
@@ -586,6 +586,8 @@ static quit(int fd)
 
 	// close connection
 	close(fd);
+
+	return TRUE;
 }
 
 
@@ -622,10 +624,10 @@ int main(int argc, char *args[])
 		exit(1);
 	}
 
-	printf("Connect success!");
+	printf("Connect success!\n");
 
 	while(read(STDIN_FILENO, buf, 32) > 0) {
-		printf("Read Command: %s\n", buf);
+		//printf("Read Command: %s\n", buf);
 		switch(comm_type(buf)) {
 			case LIST:
 				list_files(sfd);
@@ -650,4 +652,5 @@ int main(int argc, char *args[])
 
 out:
 	delete_hash_entries();
+	return 0;
 }

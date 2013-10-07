@@ -7,7 +7,9 @@
 #define PULL  2
 #define LEAVE 3
 
-
+#define BOOL int
+#define FALSE 0
+#define TRUE 1
 
 extern char g_dir[256];
 typedef struct command_header
@@ -39,5 +41,9 @@ typedef struct response
 	void *data;
 } response_t;
 
+
+BOOL read_command(int fd, struct command *comm);
+
+BOOL process_command(struct command *comm, struct response *res);
 
 #endif

@@ -8,6 +8,7 @@
 #include <assert.h>
 #include <dirent.h>
 #include <string.h>
+#include <openssl/md5.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 
@@ -22,9 +23,6 @@ typedef struct file_entry
 }file_entry_t;
 
 
-#define BOOL int
-#define TRUE  1
-#define FALSE 0
 #define FILE_ENTRIES_SIZE 8 * 1024 * 1024
 
 
@@ -33,7 +31,7 @@ static BOOL read_command_header(int fd, struct command_header *header)
 	char *buf = NULL;
 	int size = sizeof(*header);
 	int ret = 0;
-	assert(fd > 0);
+	assert(fd >= 0);
 	assert(header != NULL);
 	
 	buf = (char *)malloc(size);
@@ -70,7 +68,7 @@ static BOOL read_command_header(int fd, struct command_header *header)
 static BOOL read_command_body(int fd, void **buf, int size)
 {
 	int ret = 0;
-	assert(fd > 0);
+	assert(fd >= 0);
 	assert(size > 0);
 
 	if(*buf == NULL) {
@@ -109,14 +107,14 @@ BOOL read_command(int fd, struct command *comm)
 	BOOL res = TRUE;
 
 	assert(comm != NULL);
-	assert(fd > 0);
+	assert(fd >= 0);
 
 	memset(&(comm->header), 0, sizeof(comm->header));
 
 	/* read command header */
 	res = read_command_header(fd, &(comm->header));
 	if(res == FALSE) {
-		printf("Read command header failed of %d\n");
+		printf("Read command header failed of %d\n", fd);
 		return FALSE;
 	}
 
@@ -234,11 +232,12 @@ static BOOL compute_file_md5(char *f_name, char *md5, int f_size)
 	}
 
 	/* compute md5, using openssl/md5.h */
-	MD5(data,f_size,md);
+	MD5((unsigned char *)data, f_size, md);
 	for (i = 0; i < 16; i++) {
 		sprintf(tmp,"%2.2x",md[i]);
 		strcat(md5,tmp);
 	}
+
 out:
 	if(data != NULL)
 		free(data);
@@ -258,7 +257,6 @@ static BOOL list_current_files(struct response *res)
 	BOOL ret = TRUE;
 	DIR *dir = NULL;
 	struct dirent *d_entry = NULL;
-	struct file_entry fe;
 	struct stat fstat;
 	int curr_pos = 0;
 	int f_entry_size = 0;
@@ -290,10 +288,13 @@ static BOOL list_current_files(struct response *res)
 			goto out;
 		}
 
+		memset(f_md5, 0, 33);
 		if(compute_file_md5(d_entry->d_name, f_md5, fstat.st_size) == FALSE)
 			goto out;
 
-		f_entry_size = strlen(d_entry->d_name) + sizeof(fstat.st_size) + sizeof(fstat.st_mtime) + strlen(f_md5);
+		printf("file %s, size is %d, md5 is %s\n", d_entry->d_name, fstat.st_size, f_md5);
+
+		f_entry_size = strlen(d_entry->d_name) + sizeof(fstat.st_size) + strlen(f_md5);
 
 		assert(curr_pos < FILE_ENTRIES_SIZE);
 		assert(curr_pos + f_entry_size < FILE_ENTRIES_SIZE);
@@ -302,8 +303,6 @@ static BOOL list_current_files(struct response *res)
 		curr_pos += sizeof(f_entry_size);
 		memcpy((char *)res->data + curr_pos, &(fstat.st_size), sizeof(fstat.st_size));
 		curr_pos += sizeof(fstat.st_size);
-		memcpy((char *)res->data + curr_pos, &(fstat.st_mtime), sizeof(fstat.st_mtime));
-		curr_pos += sizeof(fstat.st_mtime);
 		memcpy((char *)res->data + curr_pos, f_md5, strlen(f_md5));
 		curr_pos += strlen(f_md5);
 		memcpy((char *)res->data + curr_pos, d_entry->d_name, strlen(d_entry->d_name));
@@ -344,6 +343,8 @@ BOOL process_command(struct command *comm, struct response *res)
 			return FALSE;
 			break;
 	}
+
+	return TRUE;
 }
 
 

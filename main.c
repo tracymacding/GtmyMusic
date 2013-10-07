@@ -1,12 +1,16 @@
 #include "command.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <assert.h>
 #include <string.h>
+#include <pthread.h>
+#include <arpa/inet.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <linux/in.h>
+//#include <linux/in.h>
 
 #define FALSE 0
 #define TRUE  1
@@ -29,7 +33,7 @@ typedef struct thread
 static BOOL send_data(int fd, void * data, int size)
 {
 	int written = 0;
-	int remain = 0;
+	int remain = size;
 	int ret;
 
 	if(data == NULL || size == 0)
@@ -62,7 +66,7 @@ static BOOL send_response(int fd, struct response *res, int error_code)
 
 	res->header.status = error_code;
 
-	if(send_data(fd, &(res->header), sizeof(res->header) != TRUE))
+	if(send_data(fd, &(res->header), sizeof(res->header)) != TRUE)
 		return FALSE;
 
 	return send_data(fd, res->data, res->header.data_size);
@@ -77,6 +81,8 @@ static void *thread_loop(void *arg)
 	struct response res;
 	int error_code = 200;
 	int fd = t->fd;
+
+	printf("fd = %d\n", fd);
 
 	while(!g_shutdown) {
 		
@@ -121,6 +127,8 @@ send_response:
 		free(res.data);
 
 	t->running = 0;
+
+	return NULL;
 }
 
 
@@ -128,13 +136,14 @@ send_response:
 int main(int argc, char *args[])
 {
 	int lfd, newfd;
+	int reuseaddr;
 	struct sockaddr_in server_addr, c_addr;
 	int port = 123456;
 	struct thread *thread_info = NULL;
 	struct thread *t_queue_head = NULL;
 	struct thread *entry = NULL;
 	struct thread *next = NULL;
-	int sin_len;
+	socklen_t sin_len = sizeof(struct sockaddr_in);
 
 	if(argc < 3) {
 		printf("Usage: ./server port file_dir\n");
@@ -149,6 +158,8 @@ int main(int argc, char *args[])
 		printf("create listen socket failed: %s\n", strerror(errno));
 		exit(1);
 	}
+
+	setsockopt (lfd, SOL_SOCKET,SO_REUSEADDR, (const void *) &reuseaddr, sizeof(int));
 
 	bzero(&server_addr, sizeof(server_addr));
 	server_addr.sin_family = AF_INET;
@@ -170,14 +181,14 @@ int main(int argc, char *args[])
 	
 	for(;;) {
 
-		if(newfd = accept(lfd, (struct sockaddr *)(&c_addr), &sin_len) < 0) {
+		if((newfd = accept(lfd, (struct sockaddr *)(&c_addr), &sin_len)) < 0) {
 			printf("accept error: %s, we should exit\n", strerror(errno));
 			g_shutdown = TRUE;
 			break;
 		}
 
 #if DEBUG
-		//printf("Reveive connect from %s, port %d\n");
+		printf("Reveive connect from %s, port %d\n", inet_ntoa(c_addr.sin_addr), c_addr.sin_port);
 #endif
 
 		if((thread_info = (struct thread *)malloc(sizeof(thread_t))) == NULL) {
@@ -188,11 +199,10 @@ int main(int argc, char *args[])
 		
 		thread_info->fd = newfd;
 		thread_info->running = 1;
-
-		/* insert thread queue */
 		thread_info->next = t_queue_head;
 		t_queue_head = thread_info;
-
+		
+		printf("newfd = %d\n", thread_info->fd);
 		pthread_create(&(thread_info->pid), NULL, thread_loop, (void *)thread_info);
 	}
 
@@ -216,6 +226,6 @@ out:
 		next = entry->next;
 		free(entry);
 	}
-
+	close(lfd);
 	return 0;
 }

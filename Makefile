@@ -10,7 +10,7 @@ client : client.o
 	cc -o $@ client.o $(LIBS)
 
 .c.o:
-	$(CC) -c $(CFLAGS) -o $@ $<
+	$(CC) -c $(CFLASS) -o $@ $<
 
 main.o : main.c command.h command.c
 command.o : command.h command.c
