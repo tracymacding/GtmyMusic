@@ -11,14 +11,14 @@
 typedef struct command_header
 {
 	char type; // command type list above
-	int  size; // data size of command
+	int  data_size; // data size of command
 } command_header_t;
 
 
 
 typedef struct command
 {
-	struct command_header;
+	struct command_header header;
 	void   *data;
 } command_t;
 

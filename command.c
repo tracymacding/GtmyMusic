@@ -196,6 +196,69 @@ out:
 
 
 
+
+static BOOL  compute_file_md5(char *f_name, char *md5, int f_size)
+{
+	int fd;
+	char *data;
+	int read = 0;
+	int remain = f_size;
+	int ret;
+	BOOL res = TRUE;
+	unsigned char md[16];
+	int i;
+	char tmp[3]={'\0'};
+
+
+	assert(md5 != NULL);
+
+	fd = open(f_name, O_RDONLY);
+	if(fd < 0) {
+		printf("open file %s failed while compute file md5: %s\n", f_name, strerror(md5));
+		return FALSE;
+	}
+
+	data = (char *)malloc(f_size);
+	if(data == NULL) {
+		printf("Malloc failed while compute md5\n");
+		close(fd);
+		return FALSE;
+	}
+
+	for(;;) {
+		ret = read(fd, data + read, remain);
+		if(ret < 0) {
+			res = FALSE;
+			printf("Read file %s failed while compute file md5: ", f_name, strerror(errno));
+			goto out;
+		}
+		read += ret;
+		remain -= ret;
+		if(remain <= 0)
+			break;
+	}
+
+	/* compute md5, using openssl/md5.h */
+	MD5(data,f_size,md);
+	for (i = 0; i < 16; i++) {
+		sprintf(tmp,"%2.2x",md[i]);
+		strcat(md5,tmp);
+	}
+											    }
+out:
+	if(data != NULL)
+		free(data);
+
+	if(fd > 0)
+		close(fd);
+
+	return res;
+}
+
+
+
+
+
 /* list current files */
 static BOOL list_current_files(struct response *res)
 {
@@ -206,6 +269,7 @@ static BOOL list_current_files(struct response *res)
 	struct stat fstat;
 	int curr_pos = 0;
 	int f_entry_size = 0;
+	char f_md5[33];
 
 	dir = opendir(g_dir);
 	if(dir == NULL) {
@@ -227,12 +291,16 @@ static BOOL list_current_files(struct response *res)
 		if(d_entry->d_name[0] == '.')
 			continue;
 		
-		if(stat(d_entry->dname, &fstat) < 0) {
+		if(stat(d_entry->d_name, &fstat) < 0) {
 			printf("stat file %s failed: %s\n", d_entry->d_name, strerror(errno));
 			ret = FALSE;
 			goto out;
 		}
-		f_entry_size = strlen(d_entry->d_name) + sizeof(fstat.st_size) + sizeof(fstat.st_mtime);
+
+		if(compute_file_md5(d_entry->d_name, f_md5) == FALSE)
+			goto out;
+
+		f_entry_size = strlen(d_entry->d_name) + sizeof(fstat.st_size) + sizeof(fstat.st_mtime) + strlen(f_md5);
 
 		assert(curr_pos < FILE_ENTRIES_SIZE);
 		assert(curr_pos + f_entry_size < FILE_ENTRIES_SIZE);
@@ -243,8 +311,9 @@ static BOOL list_current_files(struct response *res)
 		curr_pos += strlen(d_entry->d_name);
 		memcpy((char *)res->data + curr_pos, &(fstat.st_size), sizeof(fstat.st_size));
 		curr_pos += sizeof(fstat.st_size);
-		memcpy(char *)res->data + curr_pos, &(fstat.st_mtime), sizeof(fstat.m_time));
+		memcpy((char *)res->data + curr_pos, &(fstat.st_mtime), sizeof(fstat.m_time));
 		curr_pos += sizeof(fstat.st_mtime);
+		memcpy((char *)res->data + curr_pos, f_md5, strlen(f_md5));
 		
 		res->data_size += f_entry_size + sizeof(f_entry_size);
 	}
