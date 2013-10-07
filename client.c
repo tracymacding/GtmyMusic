@@ -29,10 +29,14 @@ struct file_entry
 #define FALSE 0
 #define TRUE  1
 
+#define SERVER TRUE
+#define LOCAL  FALSE
+
 #define HASH_SIZE 128
 #define MISS_FILE_ARRAY_SIZE 100000
 
-struct file_entry* g_fe_hash[HASH_SIZE];
+struct file_entry* g_serv_fe_hash[HASH_SIZE];
+struct file_entry* g_local_fe_hash[HASH_SIZE];
 char* g_miss_file_array[MISS_FILE_ARRAY_SIZE];
 int g_miss_file_num;
 char g_local_dir[256];
@@ -49,13 +53,13 @@ int comm_type(char *buf)
 	if (buf == NULL)
 		return -1;
 
-	if(strcasecmp(buf, "LIST"))
+	if(strcasecmp(buf, "LIST") == 0)
 		return 0;
-	else if(strcasecmp(buf, "DIFF"))
+	else if(strcasecmp(buf, "DIFF")== 0)
 		return 1;
-	else if(strcasecmp(buf, "PULL"))
+	else if(strcasecmp(buf, "PULL") == 0)
 		return 2;
-	else if(strcasecmp(buf, "LEAVE"))
+	else if(strcasecmp(buf, "LEAVE") == 0)
 		return 3;
 	else 
 		return -1;
@@ -77,7 +81,7 @@ static BOOL send_data(int fd, void * data, int size)
 			if(ret == EINTR)
 				continue;
 
-			printf("write response to socket %d failed\n", fd);
+			printf("write data to socket %d failed\n", fd);
 			return FALSE;
 		}
 		written += ret;
@@ -239,16 +243,23 @@ static BOOL read_response_body(int fd, char **buf, int size)
 
 
 
-static void insert_hash_table(struct file_entry *fe)
+static void insert_hash_table(struct file_entry *fe, BOOL server)
 {
 	struct file_entry *head = NULL;
 	assert(fe != NULL);
 
 	unsigned long hash = compute_hash(fe->f_md5, strlen(fe->f_md5)) % HASH_SIZE;
-	head = g_fe_hash[hash];
+	if(server == TRUE)
+		head = g_serv_fe_hash[hash];
+	else
+		head = g_local_fe_hash[hash];
 
 	fe->next = head;
-	g_fe_hash[hash] = fe;
+	
+	if(server == TRUE)
+		g_serv_fe_hash[hash] = fe;
+	else
+		g_local_fe_hash[hash] = fe;
 }
 
 
@@ -264,7 +275,7 @@ static void display_hash_table()
 
 	for(; i < HASH_SIZE; i++)
 	{
-		ent = g_fe_hash[i];
+		ent = g_serv_fe_hash[i];
 		while(ent != NULL) {
 			printf("%s\t%d\t\n", ent->f_name, ent->size);
 			ent = ent->next;
@@ -272,34 +283,50 @@ static void display_hash_table()
 	}
 }
 
-static void delete_hash_entries()
+static void delete_hash_entries(BOOL server)
 {
 	int i = 0;
 	struct file_entry *ent = NULL;
 
-	for(; i < HASH_SIZE; i++)
-	{
-		while((ent = g_fe_hash[i]) != NULL) {
-			free(ent);
-			ent = ent->next;
+	if(server == SERVER) {
+		for(; i < HASH_SIZE; i++)
+		{
+			while((ent = g_serv_fe_hash[i]) != NULL) {
+				free(ent);
+				ent = ent->next;
+			}
+			g_serv_fe_hash[i] = NULL;
 		}
-		g_fe_hash[i] = NULL;
+	}
+	else {
+		for(; i < HASH_SIZE; i++)
+		{
+			while((ent = g_local_fe_hash[i]) != NULL) {
+				free(ent);
+				ent = ent->next;
+			}
+			g_local_fe_hash[i] = NULL;
+		}
 	}
 }
+
+
+
 
 static BOOL is_miss(struct file_entry *fe)
 {
 	struct file_entry *head = NULL;
-	unsigned long  hash = compute_hash(fe->f_md5, strlen(fe->f_md5));
+	unsigned long  hash = compute_hash(fe->f_md5, strlen(fe->f_md5)) % HASH_SIZE;
 
-	head = g_fe_hash[hash];
+	head = g_local_fe_hash[hash];
 
 	while(head != NULL) {
 		if(strcmp(fe->f_md5, head->f_md5) == 0)
-			return TRUE;
+			return FALSE;
+		head = head->next;
 	}
 
-	return FALSE;
+	return TRUE;
 }
 
 
@@ -316,7 +343,8 @@ static BOOL deal_with_list(char *data, int size)
 
 	/* delete local file entry hash first */
 
-	delete_hash_entries();
+	delete_hash_entries(SERVER);
+	printf("List Result: fileName\tfileSize\n");
 
 	for(; curr_pos < size;)
 	{
@@ -341,10 +369,10 @@ static BOOL deal_with_list(char *data, int size)
 		memcpy(fe->f_name, now, name_len);
 		fe->f_name[name_len] = '\0';
 		
-		insert_hash_table(fe);
+		insert_hash_table(fe, SERVER);
 		curr_pos += sizeof(fe_size);
 		curr_pos += fe_size;
-		printf("file %s, size is %d, md5 is %s\n", fe->f_name, fe->size, fe->f_md5);
+		//printf("file %s, size is %d, md5 is %s\n", fe->f_name, fe->size, fe->f_md5);
 	}
 
 	display_hash_table();
@@ -362,12 +390,17 @@ static BOOL deal_with_pull(char *f_name, char *data, int size)
 {
 	int fd;
 	int ret;
-	int written;
+	int written = 0;
 	int remain = size;
+	char full_path[512] = {'\0'};
 
-	fd = open(f_name, O_WRONLY);
+	strcpy(full_path, g_local_dir);
+	strcat(full_path, f_name);
+	printf("file path is %s\n", full_path);
+
+	fd = open(full_path, O_WRONLY | O_CREAT);
 	if(fd < 0) {
-		printf("open file %s for storing failed: %s\n", f_name, strerror(errno));
+		printf("open file %s for storing failed: %s\n", full_path, strerror(errno));
 		return FALSE;
 	}
 	
@@ -375,7 +408,7 @@ static BOOL deal_with_pull(char *f_name, char *data, int size)
 	{
 		ret = write(fd, data + written, remain);
 		if(ret < 0) {
-			printf("write file %s failed: %s\n", f_name, strerror(errno));
+			printf("write file %s failed: %s\n", full_path, strerror(errno));
 			close(fd);
 			return FALSE;
 		}
@@ -456,11 +489,26 @@ static BOOL list_files(int fd)
 
 }
 
+static void diff_local_server()
+{
+	int i = 0;
+	printf("Diff Result\n");
+	struct file_entry *fe = NULL;
+	for(; i < HASH_SIZE; i++) {
+		fe = g_serv_fe_hash[i];
+		while(fe != NULL) {
+			if(is_miss(fe)) {
+				printf("%s\n", fe->f_name);
+				g_miss_file_array[g_miss_file_num++] = fe->f_name;
+			}
+			fe = fe->next;
+		}
+	}
+}
 
 
 static BOOL get_miss_files()
 {
-	int i = 0;
 	BOOL ret = TRUE;
 	DIR *dir = NULL;
 	struct dirent *d_entry = NULL;
@@ -476,6 +524,7 @@ static BOOL get_miss_files()
 	}
 
 	g_miss_file_num = 0;
+	delete_hash_entries(LOCAL);
 
 	/* read all file entry and get it's stat */
 	while((d_entry = readdir(dir)) != NULL) {
@@ -507,13 +556,10 @@ static BOOL get_miss_files()
 		}
 		memcpy(fe->f_name, d_entry->d_name, name_len);
 		fe->f_name[name_len] = '\0';
+		insert_hash_table(fe, LOCAL);
 		
-		if(is_miss(fe)) {
-			printf("%s\n", fe->f_name);
-			g_miss_file_array[i++] = fe->f_name;
-			g_miss_file_num++;
-		}
 	}
+	diff_local_server();
 
 out:
 	closedir(dir);
@@ -548,18 +594,20 @@ static BOOL pull_files(int fd)
 	if(diff(fd) == FALSE)
 		return FALSE;
 
+	comm.header.type = (char) PULL;
+
 	/* pull all miss file */
 	for(i = 0; i < g_miss_file_num; i++) {
-		comm.header.type = (char) PULL;
 		comm.header.data_size = strlen(g_miss_file_array[i]);
 		comm.data = malloc(comm.header.data_size);
-		if(comm.data == NULL);
+		if(comm.data == NULL)
 			continue;
 
 		if(send_data(fd, &(comm.header), sizeof(comm.header)) < 0) {
 			free(comm.data);
 			continue;
 		}
+		memcpy(comm.data, g_miss_file_array[i], comm.header.data_size);
 		if(send_data(fd, comm.data, comm.header.data_size) < 0) {
 			free(comm.data);
 			continue;
@@ -598,6 +646,7 @@ int main(int argc, char *args[])
 	int port;
 	int sfd;
 	char buf[32];
+	char *pos = NULL;
 
 	if(argc < 4) {
 		usage();
@@ -627,6 +676,13 @@ int main(int argc, char *args[])
 	printf("Connect success!\n");
 
 	while(read(STDIN_FILENO, buf, 32) > 0) {
+		//ignore '\n' after command
+		pos = index(buf, '\n');
+		*pos = '\0';
+
+		if(buf[0] == '\0')
+			continue;
+
 		//printf("Read Command: %s\n", buf);
 		switch(comm_type(buf)) {
 			case LIST:
@@ -651,6 +707,7 @@ int main(int argc, char *args[])
 	}
 
 out:
-	delete_hash_entries();
+	delete_hash_entries(SERVER);
+	delete_hash_entries(LOCAL);
 	return 0;
 }

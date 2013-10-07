@@ -14,7 +14,7 @@
 extern char g_dir[256];
 typedef struct command_header
 {
-	char type; // command type list above
+	int  type; // command type list above
 	int  data_size; // data size of command
 } command_header_t;
 

@@ -40,7 +40,7 @@ static BOOL read_command_header(int fd, struct command_header *header)
 	memset(buf, 0, size);
 
 	for(;;) {
-		ret = read(fd, header, size);
+		ret = read(fd, buf, size);
 		if(ret < 0) {
 			if(ret == EINTR)
 				continue;
@@ -49,8 +49,8 @@ static BOOL read_command_header(int fd, struct command_header *header)
 		}
 		size -= ret;
 		if(size <= 0) {
-			header->type = *(char *)buf;
-			header->data_size = *(int *)((char *)buf + 1);
+			header->type = *(int *)buf;
+			header->data_size = *((int *)buf + 1);
 			break;
 		}
 	}
@@ -123,11 +123,17 @@ BOOL read_command(int fd, struct command *comm)
 	/* read command data if neccessary */
 	switch(command) {
 		case LIST:
+			printf("Get LIST command\n");
+			break;
 		case LEAVE:
+			printf("Get LEAVE command\n");
+			break;
 		case DIFF:
+			printf("Get DIFF command\n");
 			break;
 		case PULL:
-			res = read_command_body(fd, comm->data, comm->header.data_size);
+			printf("Get PULL command\n");
+			res = read_command_body(fd, &(comm->data), comm->header.data_size);
 			break;
 		default:
 			printf("Invalid command\n");
@@ -178,8 +184,10 @@ static BOOL read_file_data(char *file_name, struct response *res)
 		}
 		remain -= ret;
 		finished += ret;
-		if(remain <= 0)
+		if(remain <= 0) {
+			res->header.data_size = file_stat.st_size;
 			break;
+		}
 	}
 
 out:
