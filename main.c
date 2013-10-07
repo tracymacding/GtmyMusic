@@ -193,7 +193,7 @@ int main(int argc, char *args[])
 		thread_info->next = t_queue_head;
 		t_queue_head = thread_info;
 
-		pthread_create(&(thread_info->pid), NULL, thread_loop, thread_info);
+		pthread_create(&(thread_info->pid), NULL, thread_loop, (void *)thread_info);
 	}
 
 	sleep(5);
@@ -206,7 +206,7 @@ out:
 	while(entry != NULL) {
 
 		if(entry->running)
-			pthread_join();
+			pthread_join(entry->pid, NULL);
 		entry = entry->next;
 	}
 
