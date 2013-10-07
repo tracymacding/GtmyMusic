@@ -9,7 +9,9 @@
 #include <linux/in.h>
 #include <unistd.h>
 #include <errno.h>
-
+#include <dirent.h>
+#include <assert.h>
+#include <openssl/md5.h>
 
 
 
@@ -23,6 +25,7 @@ struct file_entry
 };
 
 
+#define BOOL int
 #define FALSE 0
 #define TRUE  1
 
@@ -32,12 +35,12 @@ struct file_entry
 struct file_entry* g_fe_hash[HASH_SIZE];
 char* g_miss_file_array[MISS_FILE_ARRAY_SIZE];
 int g_miss_file_num;
-
+char g_local_dir[256];
 
 
 static void usage()
 {
-	printf("usage: ./execname ip port local_file_dir");
+	printf("usage: ./execname ip port local_file_dir\n");
 }
 
 
@@ -46,17 +49,107 @@ int comm_type(char *buf)
 	if (buf == NULL)
 		return -1;
 
-	if(stricmp(buf, "LIST"))
+	if(strcasecmp(buf, "LIST"))
 		return 0;
-	else if(stricmp(buf, "DIFF"))
+	else if(strcasecmp(buf, "DIFF"))
 		return 1;
-	else if(stricmp(buf, "PULL"))
+	else if(strcasecmp(buf, "PULL"))
 		return 2;
-	else if(stricmp(buf, "LEAVE"))
+	else if(strcasecmp(buf, "LEAVE"))
 		return 3;
 	else 
 		return -1;
 }
+
+
+static BOOL send_data(int fd, void * data, int size)
+{
+	int written = 0;
+	int remain = 0;
+	int ret;
+
+	if(data == NULL || size == 0)
+		return TRUE;
+
+	for(; ;) {
+		ret = write(fd, (char *)data + written, remain);
+		if(ret < 0) {
+			if(ret == EINTR)
+				continue;
+
+			printf("write response to socket %d failed\n", fd);
+			return FALSE;
+		}
+		written += ret;
+		remain -= ret;
+		if(remain <= 0)
+			break;
+	}
+
+	return TRUE;
+}
+
+
+static BOOL  compute_file_md5(char *f_name, char *md5, int f_size)
+{
+	int fd;
+	char *data;
+	int finished = 0;
+	int remain = f_size;
+	int ret;
+	BOOL res = TRUE;
+	unsigned char md[16];
+	int i;
+	char tmp[3]={'\0'};
+
+
+	assert(md5 != NULL);
+
+	fd = open(f_name, O_RDONLY);
+	if(fd < 0) {
+		printf("open file %s failed while compute file md5: %s\n", f_name, strerror(errno));
+		return FALSE;
+	}
+
+	data = (char *)malloc(f_size);
+	if(data == NULL) {
+		printf("Malloc failed while compute md5\n");
+		close(fd);
+		return FALSE;
+	}
+
+	for(;;) {
+		ret = read(fd, data + finished, remain);
+		if(ret < 0) {
+			res = FALSE;
+			printf("Read file %s failed while compute file md5: ", f_name, strerror(errno));
+			goto out;
+		}
+		finished += ret;
+		remain -= ret;
+		if(remain <= 0)
+			break;
+	}
+
+	/* compute md5, using openssl/md5.h */
+	MD5(data,f_size,md);
+	for (i = 0; i < 16; i++) {
+		sprintf(tmp,"%2.2x",md[i]);
+		strcat(md5,tmp);
+	}
+
+out:
+	if(data != NULL)
+		free(data);
+
+	if(fd > 0)
+		close(fd);
+
+	return res;
+}
+
+
+
 
 
 
@@ -81,7 +174,7 @@ static unsigned long  compute_hash(char *key, int length)
 static BOOL read_response_header(int fd, struct response_header *header, int size)
 {
 	int ret;
-	int read = 0;
+	int finished = 0;
 	int remain = size;
 
 	char *buf = malloc(size);
@@ -90,7 +183,7 @@ static BOOL read_response_header(int fd, struct response_header *header, int siz
 
 	for(;;) 
 	{
-		if(ret = read(fd, (char *)buf + read, remain) < 0) {
+		if((ret = read(fd, (char *)buf + finished, remain)) < 0) {
 			if(ret == EINTR) 
 				continue;
 
@@ -98,14 +191,16 @@ static BOOL read_response_header(int fd, struct response_header *header, int siz
 			return FALSE;
 		}
 
-		read += ret;
+		finished += ret;
 		remain -= ret;
-		if(remain < = 0)
+		if(remain <= 0)
 			break;
 	}
 
-	header.status = *(int *)buf;
-	header.data_size = *((int *)buf + 1);
+	header->status = *(int *)buf;
+	header->data_size = *((int *)buf + 1);
+
+	return TRUE;
 }
 
 
@@ -113,7 +208,7 @@ static BOOL read_response_header(int fd, struct response_header *header, int siz
 
 static BOOL read_response_body(int fd, char *buf, int size)
 {
-	int read = 0;
+	int finished = 0;
 	int remain = size;
 	int ret;
 
@@ -125,18 +220,17 @@ static BOOL read_response_body(int fd, char *buf, int size)
 
 	for(;;) 
 	{
-		if(ret = read(fd, buf + read, remain) < 0) {
+		if((ret = read(fd, buf + finished, remain)) < 0) {
 			if(ret == EINTR) 
-				continue
-						;
+				continue;
 			printf("Read response header failed: %s\n", strerror(errno));
 			free(buf);
-			return FALSE
+			return FALSE;
 		}
 
-		read += ret;
+		finished += ret;
 		remain -= ret;
-		if(remain < = 0)
+		if(remain <= 0)
 			break;
 	}
 
@@ -197,7 +291,7 @@ static BOOL is_miss(struct file_entry *fe)
 	struct file_entry *head = NULL;
 	unsigned long  hash = compute_hash(fe->f_md5, strlen(fe->f_md5));
 
-	head = g_server_fe_hash[hash];
+	head = g_fe_hash[hash];
 
 	while(head != NULL) {
 		if(strcmp(fe->f_md5, head->f_md5) == 0)
@@ -217,6 +311,7 @@ static BOOL deal_with_list(char *data, int size)
 	int fe_size = 0;
 	int curr_pos = 0;
 	char *now;
+	int name_len;
 
 	/* delete local file entry hash first */
 
@@ -227,7 +322,7 @@ static BOOL deal_with_list(char *data, int size)
 		now = data + curr_pos;
 		fe_size = *(int *)now;
 		now += sizeof(fe_size);
-		fe = malloc(sizeof(*fe))
+		fe = malloc(sizeof(*fe));
 		if(fe == NULL)
 			return FALSE;
 		memset(fe, 0, sizeof(*fe));
@@ -246,7 +341,7 @@ static BOOL deal_with_list(char *data, int size)
 		memcpy(fe->f_name, now, name_len);
 		fe->f_name[name_len] = '\0';
 		
-		insert_hash_table(fe, SERVER);
+		insert_hash_table(fe);
 		curr_pos += fe_size;
 	}
 
@@ -270,7 +365,7 @@ static BOOL deal_with_pull(char *f_name, char *data, int size)
 
 	fd = open(f_name, O_WRONLY);
 	if(fd < 0) {
-		printf("open file %s for storing failed: %s\n", f_name, strerrro(errno));
+		printf("open file %s for storing failed: %s\n", f_name, strerror(errno));
 		return FALSE;
 	}
 	
@@ -292,7 +387,7 @@ static BOOL deal_with_pull(char *f_name, char *data, int size)
 }
 
 
-static BOOL parse_body(char cmd, char *buf, int size)
+static BOOL parse_body(char cmd, char *buf, int size, char *file_name)
 {
 	BOOL ret = TRUE;
 
@@ -302,7 +397,7 @@ static BOOL parse_body(char cmd, char *buf, int size)
 			ret = deal_with_list(buf, size);
 			break;
 		case PULL:
-			ret = deal_with_pull(buf, size);
+			ret = deal_with_pull(file_name, buf, size);
 			break;
 		default:
 			break;
@@ -314,13 +409,13 @@ static BOOL parse_body(char cmd, char *buf, int size)
 
 
 
-static BOOL get_result(int fd, char cmd)
+static BOOL get_result(int fd, char cmd, char *file_name)
 {
 	BOOL ret = TRUE;
 	struct response res;
 	memset(&res, 0, sizeof(res));
 
-	if(read_response_header(fd, &(res.header), sizeof(struct res.header)) == FALSE) 
+	if(read_response_header(fd, &(res.header), sizeof(res.header)) == FALSE) 
 		return FALSE;
 	
 
@@ -330,10 +425,10 @@ static BOOL get_result(int fd, char cmd)
 	}
 
 	if(res.header.data_size != 0) {
-		if(read_response_body(fd, res.data, res.data_size) != TRUE) 
+		if(read_response_body(fd, res.data, res.header.data_size) != TRUE) 
 			return FALSE;	
 
-		ret =  parse_body(cmd, res.data, res.data_size);
+		ret =  parse_body(cmd, res.data, res.header.data_size, file_name);
 	}
 
 	if(res.data != NULL)
@@ -355,7 +450,7 @@ static BOOL list_files(int fd)
 	if(send_data(fd, &(comm.header), sizeof(comm.header)) < 0)
 		return FALSE;
 
-	return get_result(fd, LIST);
+	return get_result(fd, LIST, NULL);
 
 }
 
@@ -363,6 +458,7 @@ static BOOL list_files(int fd)
 
 static BOOL get_miss_files()
 {
+	int i = 0;
 	BOOL ret = TRUE;
 	DIR *dir = NULL;
 	struct dirent *d_entry = NULL;
@@ -371,6 +467,7 @@ static BOOL get_miss_files()
 	int curr_pos = 0;
 	int f_entry_size = 0;
 	char f_md5[33];
+	int name_len;
 
 	dir = opendir(g_local_dir);
 	if(dir == NULL) {
@@ -391,10 +488,10 @@ static BOOL get_miss_files()
 			goto out;
 		}
 
-		if(compute_file_md5(d_entry->d_name, f_md5) == FALSE)
+		if(compute_file_md5(d_entry->d_name, f_md5, fstat.st_size) == FALSE)
 			goto out;
 
-		fe = malloc(sizeof(*fe))
+		fe = malloc(sizeof(*fe));
 		if(fe == NULL)
 			return FALSE;
 		memset(fe, 0, sizeof(*fe));
@@ -402,7 +499,7 @@ static BOOL get_miss_files()
 		fe->m_time = fstat.st_mtime;
 		memcpy(fe->f_md5, f_md5, 32);
 		fe->f_md5[33] = '\0';
-		name_len = strlen(entry->d_name);
+		name_len = strlen(d_entry->d_name);
 		fe->f_name = malloc(name_len + 1);
 		if(fe->f_name == NULL) {
 			free(fe);
@@ -419,9 +516,6 @@ static BOOL get_miss_files()
 	}
 
 out:
-	if(ret != TRUE && res->data != NULL)
-		free(res->data);
-
 	closedir(dir);
 	return ret;
 	
@@ -447,10 +541,11 @@ static BOOL diff(int fd)
  */
 static BOOL pull_files(int fd)
 {
+	int i;
 	struct command comm;
 	memset(&comm, 0, sizeof(comm));
 
-	if(diff() == FALSE)
+	if(diff(fd) == FALSE)
 		return FALSE;
 
 	/* pull all miss file */
@@ -466,11 +561,11 @@ static BOOL pull_files(int fd)
 			continue;
 		}
 		if(send_data(fd, comm.data, comm.header.data_size) < 0) {
-			free(comm.data)
+			free(comm.data);
 			continue;
 		}
 		free(comm.data);
-		get_result(fd, PULL);
+		get_result(fd, PULL, g_miss_file_array[i]);
 	}
 
 	return TRUE;
@@ -508,6 +603,7 @@ int main(int argc, char *args[])
 	}
 
 	port = atoi(args[2]);
+	strcpy(g_local_dir, args[3]);
 
 	sfd = socket(AF_INET, SOCK_STREAM, 0);
 	if(sfd < 0) {
