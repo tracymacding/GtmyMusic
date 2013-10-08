@@ -528,6 +528,7 @@ static BOOL get_miss_files(BOOL print)
 	struct stat fstat;
 	char f_md5[33];
 	int name_len;
+	char full_path[512];
 
 	dir = opendir(g_local_dir);
 	if(dir == NULL) {
@@ -543,14 +544,18 @@ static BOOL get_miss_files(BOOL print)
 		if(d_entry->d_name[0] == '.')
 			continue;
 		
-		if(stat(d_entry->d_name, &fstat) < 0) {
-			printf("stat file %s failed: %s\n", d_entry->d_name, strerror(errno));
+		memset(full_path, 0, 512);
+		strcpy(full_path, g_local_dir);
+		strcat(full_path, d_entry->d_name);
+
+		if(stat(full_path, &fstat) < 0) {
+			printf("stat file %s failed: %s\n", full_path, strerror(errno));
 			ret = FALSE;
 			goto out;
 		}
 	
 		memset(f_md5, 0, 33);
-		if(compute_file_md5(d_entry->d_name, f_md5, fstat.st_size) == FALSE)
+		if(compute_file_md5(full_path, f_md5, fstat.st_size) == FALSE)
 			goto out;
 
 		fe = malloc(sizeof(*fe));
