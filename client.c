@@ -364,7 +364,7 @@ static BOOL deal_with_list(char *data, int size, BOOL print)
 		memcpy(fe->f_md5, (char *)now, 32);
 		fe->f_md5[33] = '\0';
 		now += 32;
-		name_len = fe_size - sizeof(fe->size) - 32;
+		name_len = fe_size - sizeof(fe->size) - 32 - sizeof(int);
 		fe->f_name = malloc(name_len + 1);
 		if(fe->f_name == NULL) {
 			free(fe);
@@ -374,7 +374,6 @@ static BOOL deal_with_list(char *data, int size, BOOL print)
 		fe->f_name[name_len] = '\0';
 		
 		insert_hash_table(fe, SERVER);
-		curr_pos += sizeof(fe_size);
 		curr_pos += fe_size;
 		//printf("file %s, size is %d, md5 is %s\n", fe->f_name, fe->size, fe->f_md5);
 	}

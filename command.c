@@ -315,21 +315,21 @@ static BOOL list_current_files(struct response *res)
 
 		printf("file %s, size is %d, md5 is %s\n", d_entry->d_name, fstat.st_size, f_md5);
 
-		f_entry_size = strlen(d_entry->d_name) + sizeof(fstat.st_size) + strlen(f_md5);
+		f_entry_size = strlen(d_entry->d_name) + sizeof(int) + 32 + sizeof(int);
 
 		assert(curr_pos < FILE_ENTRIES_SIZE);
 		assert(curr_pos + f_entry_size < FILE_ENTRIES_SIZE);
 		
 		memcpy((char *)res->data + curr_pos, &f_entry_size,  sizeof(f_entry_size));
 		curr_pos += sizeof(f_entry_size);
-		memcpy((char *)res->data + curr_pos, &(fstat.st_size), sizeof(fstat.st_size));
-		curr_pos += sizeof(fstat.st_size);
+		memcpy((char *)res->data + curr_pos, &(fstat.st_size), sizeof(int));
+		curr_pos += sizeof(int);
 		memcpy((char *)res->data + curr_pos, f_md5, strlen(f_md5));
 		curr_pos += strlen(f_md5);
 		memcpy((char *)res->data + curr_pos, d_entry->d_name, strlen(d_entry->d_name));
 		curr_pos += strlen(d_entry->d_name);
 		
-		res->header.data_size += f_entry_size + sizeof(f_entry_size);
+		res->header.data_size += f_entry_size;
 	}
 
 out:
